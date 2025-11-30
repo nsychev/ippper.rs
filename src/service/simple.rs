@@ -214,7 +214,7 @@ impl<T: SimpleIppServiceHandler> SimpleIppService<T> {
         let host = if let Some(host) = head.headers.get("Host") {
             let from_user = host.to_str().unwrap_or(self.host.as_str());
             if !from_user.contains(':') && self.host.contains(':') {
-                format!("{}:{}", from_user, self.host.split(':').last().unwrap())
+                format!("{}:{}", from_user, self.host.split(':').next_back().unwrap())
             } else {
                 from_user.to_string()
             }
@@ -1050,7 +1050,7 @@ impl<T: SimpleIppServiceHandler> IppService for SimpleIppService<T> {
                 resp.attributes_mut().groups_mut().push(group);
 
                 count += 1;
-                if limit.map_or(false, |x| count >= x) {
+                if limit.is_some_and(|x| count >= x) {
                     break;
                 }
             }
