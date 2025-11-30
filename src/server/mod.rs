@@ -44,8 +44,8 @@ where
 {
     let listener = TcpListener::bind(addr).await?;
     loop {
-        let stream = match listener.accept().await {
-            Ok((stream, _)) => stream,
+        let (stream, remote_addr) = match listener.accept().await {
+            Ok((stream, remote_addr)) => (stream, remote_addr),
             Err(err) => {
                 log::error!("Error accepting connection: {:?}", err);
                 continue;
@@ -53,8 +53,12 @@ where
         };
         let service = service.clone();
         tokio::task::spawn(async move {
+            let wrapped_service = hyper::service::service_fn(move |mut req: Request<Incoming>| {
+                req.extensions_mut().insert(remote_addr);
+                service.call(req)
+            });
             if let Err(err) = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
-                .serve_connection(TokioIo::new(stream), service)
+                .serve_connection(TokioIo::new(stream), wrapped_service)
                 .await
             {
                 log::error!("Error serving connection: {:?}", err);
@@ -81,8 +85,8 @@ where
     let listener = TcpListener::bind(addr).await?;
     let acceptor = TlsAcceptor::from(tls_config);
     loop {
-        let stream = match listener.accept().await {
-            Ok((stream, _)) => stream,
+        let (stream, remote_addr) = match listener.accept().await {
+            Ok((stream, remote_addr)) => (stream, remote_addr),
             Err(err) => {
                 log::error!("Error accepting connection: {:?}", err);
                 continue;
@@ -91,6 +95,10 @@ where
         let service = service.clone();
         let acceptor = acceptor.clone();
         tokio::task::spawn(async move {
+            let wrapped_service = hyper::service::service_fn(move |mut req: Request<Incoming>| {
+                req.extensions_mut().insert(remote_addr);
+                service.call(req)
+            });
             let mut header = [0u8; 1];
             if let Err(err) = stream.peek(&mut header).await {
                 log::error!("Error peeking connection: {:?}", err);
@@ -99,7 +107,7 @@ where
             let result = if header[0] != 22 {
                 // Not a TLS connection
                 hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
-                    .serve_connection(TokioIo::new(stream), service)
+                    .serve_connection(TokioIo::new(stream), wrapped_service)
                     .await
             } else {
                 let stream = match acceptor.accept(stream).await {
@@ -110,7 +118,7 @@ where
                     }
                 };
                 hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
-                    .serve_connection(TokioIo::new(stream), service)
+                    .serve_connection(TokioIo::new(stream), wrapped_service)
                     .await
             };
             if let Err(err) = result {
